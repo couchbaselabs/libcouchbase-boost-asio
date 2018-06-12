@@ -332,6 +332,8 @@ public:
         H_Timer(BoostTimer *tm) : parent(tm) {}
         void operator() (const error_code& ec) {
             if (ec) { return; }
+            // This callback can be called even after the timer has been canceled.
+            if (parent->callback == NULL) { return; }
             parent->callback(-1, 0, parent->arg);
         }
     };
