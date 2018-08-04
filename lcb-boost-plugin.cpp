@@ -325,11 +325,11 @@ private:
     };
 };
 
-class BoostTimer {
+class BoostTimer : public std::enable_shared_from_this<BoostTimer> {
 public:
     struct H_Timer {
-        BoostTimer *parent;
-        H_Timer(BoostTimer *tm) : parent(tm) {}
+        std::shared_ptr<BoostTimer> parent;
+        H_Timer(const std::shared_ptr<BoostTimer>& tm) : parent(tm) {}
         void operator() (const error_code& ec) {
             if (ec) { return; }
             // This callback can be called even after the timer has been canceled.
@@ -352,7 +352,7 @@ public:
         this->callback = cb;
         this->arg = arg;
         m_timer.expires_from_now(boost::posix_time::microseconds(usec));
-        m_timer.async_wait(H_Timer(this));
+        m_timer.async_wait(H_Timer(shared_from_this()));
     }
 
     void cancel() {
@@ -380,17 +380,25 @@ static void stop_loop(_IOPS* io) {
     getIops(io)->stop();
 }
 static void* create_timer(_IOPS* io) {
-    return new BoostTimer(getIops(io));
+    // This dynamically allocated shared_ptr will be deleted in
+    // 'destroy_timer' function
+    return new std::shared_ptr<BoostTimer>(new BoostTimer(getIops(io)));
 }
 static void destroy_timer(_IOPS*, void *timer) {
-    delete (BoostTimer *)timer;
+    auto* timer_ptr = static_cast<std::shared_ptr<BoostTimer>*>(timer);
+    delete timer_ptr;
+
+    // BoostTimer can survive after 'destroy_timer' function call because the
+    // H_Timer callback can be called after the timer is canceled.
 }
 static int schedule_timer(_IOPS*, void *timer, uint32_t us, void *arg, _ECB cb) {
-    ((BoostTimer *)timer)->schedule(us, cb, arg);
+    auto& timer_ref = *static_cast<std::shared_ptr<BoostTimer>*>(timer);
+    timer_ref->schedule(us, cb, arg);
     return 0;
 }
 static void cancel_timer(_IOPS*, void *timer) {
-    ((BoostTimer *)timer)->cancel();
+    auto& timer_ref = *static_cast<std::shared_ptr<BoostTimer>*>(timer);
+    timer_ref->cancel();
 }
 static _SD *create_socket(_IOPS* io, int domain, int, int) {
     return new BoostSocket(getIops(io), domain);
